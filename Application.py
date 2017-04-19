@@ -7,6 +7,8 @@ sns.set(style="whitegrid", color_codes=True)
 
 from pandas.tools import plotting
 from sklearn import datasets, linear_model
+#need 18.1 to use model_selection
+from sklearn.model_selection import train_test_split
 from pandas.stats.api import ols
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
@@ -21,14 +23,12 @@ def main():
     district = removeNotRated(district)
     district = fixString(district)
     district = fixMissing(district)
-    district = logTransform(district)
-    
-    targetField = 'DOMAIN_IV_SCORE'
-    
+    district = flagsToNum(district)
+    district = logTransform(district)    
     district = createDummies(district, 'TYPE_DESCRIPTION')
     
+    targetField = 'DOMAIN_IV_SCORE'  
     district = dropRowsMissingScores(district,targetField)
-    
     toCSV(district)
     #plt.figure()
     #district['DI1'].diff().hist()
@@ -38,14 +38,14 @@ def main():
     #district['DI3'].diff().hist()
     #plt.figure()
     #district['DI4'].diff().hist()
-    #plotting.scatter_matrix(district[['DI1','2016_CTE_PCT','2016_TEACHER_TURNOVER_RATIO','2016_ECODIS_PCT', '2015_OPERATING_EXPENDITURES_PER_STUDENT','2016_GT_PCT','2016_TEACHER_STUDENT_RATIO']])    
+    #plotting.scatter_matrix(district[['DI1','2016_CTE_PCT','2016_TEACHER_TURNOVER_RATIO','2016_ECODIS_PCT', '2015_OPERATING_EXPENDITURES_PER_STUDENT','2016_GT_PCT','2016_TEACHER_STUDENT_RATIO']])    
 
     # encode TYPE_DESCRIPTION as TYPE_DESCRIPTION_ORD
     district['DISTRICT_TYPE_NOM'] = pd.Categorical(district.DISTRICT_TYPE).codes
     district['CHARTER_OPERATOR_NOM'] = pd.Categorical(district.CHARTER_OPERATOR).codes
-   
+    
     y = district[targetField]
-    X = district[[
+    predictors = district[[
         #'2016_CTE_PCT'
         '2016_GT_PCT'
         #'2016_ECODIS_PCT'
@@ -73,9 +73,9 @@ def main():
         ,'2016_ENROLLMENT'
         #,'2016_WADA'
                 ]]
-    X = sm.add_constant(X)
+    predictors = sm.add_constant(predictors)
     
-    est = sm.OLS(y,X).fit()
+    est = sm.OLS(y,predictors).fit()
     print(est.summary())
 
 def createDummies(district, fieldName):
@@ -149,7 +149,7 @@ def readDistrictFiles():
 
     #rename other columns
     districtType = districtType.rename(columns = {'Description':'Type_Description'})
-    districtReference = districtReference.rename(columns = {'DFLCHART':'CHARTER_OPERATOR'})
+    districtReference = districtReference.rename(columns = {'DFLCHART':'CHARTER_OPERATOR_FLAG'})
     districtStaffStudents = districtStaffStudents.rename(columns =
                                                          {'DPETALLC':'2016_ENROLLMENT','DPEMALLP':'2015_MOBILITY_PCT',
                                                           'DPETWHIP':'2016_WHITE_PCT','DPETBLAP':'2016_AFRAM_PCT',
@@ -201,8 +201,6 @@ def combineDistrictFiles(district, districtGeometry, districtType, districtRatin
     district.columns = district.columns.str.upper()
     return district
 
-
-
 def convertToCategorical(value):
 
     #Use this function to convert a field to categorical
@@ -221,35 +219,17 @@ def convertToCategorical(value):
     else:
         return 6
 
-
-    
-
-#def convertPredictors(district):
-    #use this function to convert the A-F fields to categorical fields with labels
-    #consider as alternative
-#    grade_cols = [col for col in district.columns if 'GRADE' in col]
-#    for i in ob_cols:
-#        district[i] = district[i].fillna('Missing')
- #   print(grade_cols)
- #   return district
-
-        
-
 def removeNotRated(district):
     #Remove districts that did not receive any ratings
     grade_cols = [col for col in district.columns if 'GRADE' in col]
     district.dropna(subset = [grade_cols],how='all', inplace=True)
     return district
 
-
-
 def fixString(district):
     #change numeric fields to strings (where the number is just an unordered category)
     district['COUNTY_NUMBER'] = district['COUNTY_NUMBER'].apply(str)
     district['REGION_NUMBER'] = district['REGION_NUMBER'].apply(str)
-    return district
-
-    
+    return district  
 
 def fixMissing(district):
     #fix flags
@@ -264,6 +244,17 @@ def fixMissing(district):
         district[i] = district[i].fillna('Missing')
     return district
 
+#def removeZeros(district):
+    #fix fields where 0 should be null
+    #2014_PROP_VAL 2016_WEALTH_PER_WADA
+    #need to write this
+
+def flagsToNum(district):  
+    flag_cols = [col for col in district.columns if 'FLAG' in col]
+    for i in flag_cols:
+        district[i] = np.where((district[i]=='Y'),1,0)
+    return district
+
 def dropRowsMissingScores(district,fieldName):
     district=district[np.isfinite(district[fieldName])]
     return district
@@ -271,14 +262,10 @@ def dropRowsMissingScores(district,fieldName):
 def toCSV(district):
         district.to_csv('district_combined.csv',sep=',')
 
-    
-
 def histogramPredictors(district):
     #http://seaborn.pydata.org/tutorial/categorical.html
     orderList = district.DOMAIN_I_LETTER_GRADE.unique()
     sns.countplot(x='DOMAIN_I_LETTER_GRADE', data=district, palette="Greens_d", order=sorted(orderList.tolist()));
-
-
 
 def logTransform(district):
     district['log2015_TOTAL_OPERATING_EXPENDITURES'] = np.log(district['2015_TOTAL_OPERATING_EXPENDITURES'])
@@ -290,4 +277,16 @@ def logTransform(district):
     district['log2016_WEALTH_PER_WADA'] = np.log(district['2016_WEALTH_PER_WADA']) 
     return district
 
+def regLASSO(district):
+    #split into train and test data sets
+    #Need to work out this code
+    #https://www.analyticsvidhya.com/blog/2016/01/complete-tutorial-ridge-lasso-regression-python/
+    district_train, district_test = train_test_split(district, test_size=0.2, random_state=30)
+    reg = linear_model.Lasso(alpha = 0.1)
+
+    #Fit the model
+    lassoreg = Lasso(alpha=alpha,normalize=True, max_iter=1e5)
+    lassoreg.fit(data[predictors],data['y'])
+    y_pred = lassoreg.predict(data[predictors])
+    
 main()
